@@ -1,0 +1,60 @@
+FROM envoyproxy/envoy-build-ubuntu:829698e9a36d266a1497fa222216a2ae91632ffe AS builder
+
+ARG ENVOY_BUILD_FLAVOR=opt
+ARG BUILD_UID=1000
+ARG BUILD_GID=1000
+
+#Make bazel use clang(doesn't work without it for now)
+ENV LLVM_PATH=/opt/llvm
+ENV PATH="${LLVM_PATH}/bin:${PATH}"
+ENV CC="${LLVM_PATH}/bin/clang"
+ENV CXX="${LLVM_PATH}/bin/clang++"
+
+#not root group for bazel, somehow doesn't work without it
+RUN groupadd -g ${BUILD_GID} envoybuilder && \
+    useradd -u ${BUILD_UID} -g envoybuilder -m -s /bin/bash envoybuilder
+
+RUN mkdir -p /home/envoybuilder/envoy_src && \
+    chown envoybuilder:envoybuilder /home/envoybuilder/envoy_src
+
+COPY --chown=envoybuilder:envoybuilder ./envoy /home/envoybuilder/envoy_src/
+
+USER envoybuilder
+
+WORKDIR /home/envoybuilder/envoy_src
+
+ENV HOME=/home/envoybuilder
+ENV USER=envoybuilder
+ENV BAZEL_DO_NOT_DETECT_ROOT=1
+
+RUN git config --global --add safe.directory /home/envoybuilder/envoy_src
+#debugging
+RUN echo "Current user: $(whoami)" && \
+    echo "HOME: ${HOME}" && \
+    echo "USER: ${USER}" && \
+    echo "Current directory: $(pwd)" && \
+    echo "Listing directory contents:" && \
+    ls -la . && \
+    echo "Permissions of current directory:" && \
+    ls -ld .
+
+RUN bazel build \
+    --config=clang \
+    //source/exe:envoy-static \
+    -c ${ENVOY_BUILD_FLAVOR}
+
+USER root
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /home/envoybuilder/envoy_src/bazel-bin/source/exe/envoy-static /usr/local/bin/envoy
+COPY envoy.yaml /etc/envoy/envoy.yaml
+
+EXPOSE 10000
+EXPOSE 9901
+
+CMD ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]

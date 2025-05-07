@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  flask_backend:
+    build:
+      context: ./flask_app
+      dockerfile: Dockerfile
+    container_name: flask_service
+    expose:
+      - "5000"
+    networks:
+      - envoy_network
+
+  envoy:
+    build:
+      context: . 
+      dockerfile: Dockerfile.envoy
+      args:
+        ENVOY_BUILD_FLAVOR: dbg 
+    container_name: envoy_proxy
+    ports:
+      - "10000:10000" 
+      - "9901:9901" 
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml 
+    depends_on:
+      - flask_backend
+    networks:
+      - envoy_network
+networks:
+  envoy_network:
+    driver: bridge
